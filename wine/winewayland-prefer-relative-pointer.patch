@@ -4,19 +4,19 @@ Does mean the cursor position can be offset if the window resizes without losing
 But that can be fixed by unfocusing and focusing the window.
 Also confines the pointer if it's unconfined and a warp was requested.
 diff --git a/dlls/winewayland.drv/wayland_pointer.c b/dlls/winewayland.drv/wayland_pointer.c
-index af404994a44..8c946bcfc3c 100644
+index 0c190a9a4..46cdbe158 100644
 --- a/dlls/winewayland.drv/wayland_pointer.c
 +++ b/dlls/winewayland.drv/wayland_pointer.c
-@@ -883,7 +883,7 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+@@ -876,7 +876,7 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
      needs_lock = wl_surface &&
-                  (((confine_rect || covers_vscreen) && !is_visible) || force_lock) &&
+                  ((confine_rect && !is_visible) || force_lock) &&
                   pointer->wl_pointer;
 -    needs_confine = wl_surface && confine_rect && is_visible && !force_lock &&
 +    needs_confine = wl_surface && (confine_rect || pointer->pending_warp) && is_visible && !force_lock &&
                      pointer->wl_pointer;
  
      if (!needs_confine && pointer->zwp_confined_pointer_v1)
-@@ -905,12 +905,15 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+@@ -898,12 +898,15 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
      if (needs_confine)
      {
          HWND hwnd = wl_surface_get_user_data(wl_surface);
@@ -37,7 +37,7 @@ index af404994a44..8c946bcfc3c 100644
  
          if (!pointer->zwp_confined_pointer_v1 || pointer->constraint_hwnd != hwnd)
          {
-@@ -930,14 +933,20 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+@@ -923,14 +926,20 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
              zwp_confined_pointer_v1_set_region(pointer->zwp_confined_pointer_v1,
                                                 region);
          }
@@ -65,24 +65,23 @@ index af404994a44..8c946bcfc3c 100644
      }
      else if (needs_lock)
      {
-@@ -980,12 +989,6 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
-                                              &relative_pointer_v1_listener, NULL);
+@@ -961,11 +970,6 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
+         pointer->accum_x = pointer->accum_y = 0;
          TRACE("Enabling relative motion\n");
      }
--    else if (!needs_relative && pointer->zwp_relative_pointer_v1)
+-    else if (!needs_relative && pointer->relative_mode)
 -    {
--        zwp_relative_pointer_v1_destroy(pointer->zwp_relative_pointer_v1);
--        pointer->zwp_relative_pointer_v1 = NULL;
+-        pointer->relative_mode = FALSE;
 -        TRACE("Disabling relative motion\n");
 -    }
  }
  
  void wayland_pointer_clear_constraint(void)
-@@ -1011,11 +1014,6 @@ BOOL WAYLAND_SetCursorPos(INT x, INT y)
+@@ -991,11 +995,6 @@ BOOL WAYLAND_SetCursorPos(INT x, INT y)
      struct wayland_pointer *pointer = &process_wayland.pointer;
  
      pthread_mutex_lock(&pointer->mutex);
--    if (pointer->zwp_relative_pointer_v1)
+-    if (pointer->relative_mode)
 -    {
 -        pthread_mutex_unlock(&pointer->mutex);
 -        return FALSE;
@@ -90,7 +89,7 @@ index af404994a44..8c946bcfc3c 100644
      pointer->pending_warp = TRUE;
      pthread_mutex_unlock(&pointer->mutex);
  
-@@ -1060,21 +1058,29 @@ BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset)
+@@ -1038,21 +1037,29 @@ BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset)
      {
          if (process_wayland.wp_pointer_warp_v1)
          {
@@ -124,15 +123,15 @@ index af404994a44..8c946bcfc3c 100644
          }
          else
          {
-             wayland_pointer_update_constraint(wl_surface, NULL, FALSE, TRUE);
+             wayland_pointer_update_constraint(wl_surface, NULL, TRUE);
          }
 -        pointer->pending_warp = FALSE;
      }
  
      if (wl_surface && hwnd == pointer->constraint_hwnd && pointer->zwp_locked_pointer_v1)
-@@ -1100,6 +1106,7 @@ BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset)
+@@ -1077,6 +1084,7 @@ BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset)
+     wayland_pointer_update_constraint(wl_surface,
                                        (clip && wl_surface) ? &confine_rect : NULL,
-                                       covers_vscreen,
                                        FALSE);
 +    pointer->pending_warp = FALSE;
      pthread_mutex_unlock(&pointer->mutex);
